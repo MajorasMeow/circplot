@@ -1,0 +1,249 @@
+
+library(tidyverse)
+library(ggrepel)
+
+# load dataset which should include columns: gene, adj_r_squared, p_value, slope, gene_means
+df<-read.csv("your_gene_correlation_data.csv")
+
+# --- data preparation ---
+# filter by mean expression
+df<-filter(df, gene_means>0.1)
+
+df <- df %>%
+  mutate(slope_direction = ifelse(slope >= 0, "positive", "negative"))
+sets brackets for eac r square in 0.1 increments
+df <- df %>%
+  mutate(r2_bracket = cut(adj_r_squared,
+                          breaks = seq(0, 1, by = 0.1),
+                          include.lowest = TRUE,
+                          right = FALSE,
+                          labels = paste0("R² ", seq(0, 0.9, by = 0.1), "-", seq(0.1, 1.0, by = 0.1))))
+# adding -log10(p_value) for better contrast
+df <- df %>%
+  mutate(logp = -log10(p_value),
+         alpha_val = scales::rescale(logp, to = c(0.3, 1)))  # adjust alpha here
+# pulls matching GO disease term from a dataframe called disease_long, which has columns: gene, term. same with rare_long for rare diseases, just another GO dbs
+df <- df %>%
+  left_join(disease_long %>% select(gene, disease_term = Term), by = "gene")
+df <- df %>%
+  left_join(rare_long %>% select(gene, rare_term = Term), by = "gene")
+
+# create GO term dataframe from all genes per bracket
+go_db <- "GO_Biological_Process_2025" # or different
+brackets <- unique(df$r2_bracket)
+go_df <- purrr::map_dfr(brackets, function(bracket) {
+  gene_list <- df %>%
+    filter(r2_bracket == bracket) %>%
+    pull(gene)
+  
+  enr <- enrichr(gene_list, go_db)[[go_db]]
+  
+  if (is.null(enr)) return(NULL)
+  
+  enr %>%
+    arrange(Adjusted.P.value) %>%
+    slice_head(n = 5) %>% 
+    select(term = Term, p_value = Adjusted.P.value) %>%
+    mutate(r2_bracket = bracket)
+})
+# sets angles from x to x to match with gene data
+go_df <- go_df %>%
+  arrange(r2_bracket, desc(p_value)) %>%
+  mutate(
+    angle = seq(0, 360 - (360 / n()), length.out = n())+5 # change start and endpoints here from 0 to 360 is full circle. think in angles.
+  )
+# splits GO terms so we can pull only the number if we want.
+go_df <- go_df %>%
+  mutate(
+    term_name = stringr::str_remove(term, "\\s*\\(GO:\\d+\\)$"),
+    go_id = stringr::str_extract(term, "GO:\\d+")
+  )
+go_df <- go_df %>%
+  mutate(logp = -log10(p_value))
+# --- plot prep ---
+theme_unique_dark <- function (base_size = 12, base_family = "") {
+  ret <- (theme_bw(base_size = base_size, base_family = base_family) +
+            theme(text = element_text(colour = "white"),
+                  title = element_text(color = "white"),
+                  line = element_line(color = "white"),
+                  rect = element_rect(fill = "black", color = "white"),
+                 # axis.ticks = element_line(color = "#969696"),
+                #  axis.title = element_text(color = "white"),
+                 # axis.text = element_text(color = "#eaeaea"),
+                #  axis.line = element_line(color = "#969696", linetype = 1),
+                  legend.background = element_rect(fill = NULL, color = NULL),
+                  legend.position = "bottom",
+                  legend.key = element_rect(fill = NA, color = NA, linetype = 0),
+                  strip.background = element_rect(fill=NA,colour=NA,size=NA,linetype = NULL),
+                  strip.text = element_text(color="white",face="bold",vjust=.5,hjust=.5),
+                  panel.background = element_rect(fill = "black", color = NULL),
+                  panel.border = element_blank(),
+                  panel.grid = element_line(color = "#252525"),
+                  panel.grid.major = element_line(color = "#353535"),
+                  panel.grid.minor = element_line(color = "#101010"),
+                  plot.background = element_rect(fill = "black", colour = "black", linetype = 0)))
+  ret
+}
+
+# Define color for slope direction
+slope_colors <- c("positive" = "darkred", "negative" = "darkblue")
+
+# Define colors for disease terms as a vector
+disease_colors <- c(
+  "neurodegenerative disease" = "ivory") # example. terms have to be aligned to GO terms from database you take.
+rare_colors <- c(
+  "neurodegenerative disease" = "ivory") # example. terms have to be aligned to GO terms from database you take.
+# highlight genes via disease term
+highlight_genes <- df %>%
+  filter(disease_term == "neurodegenerative disease") %>%
+  pull(gene)
+df_labels <- df %>%
+  filter(gene %in% highlight_genes)
+
+# --- PLOT ---
+
+ggplot() +
+  
+  # inner ring: slope inward and outward from 0 showing negative and positive correlation, respectively.
+  geom_bar(data = df,
+           aes(x = angle, y = slope, fill = slope_direction, alpha = adj_r_squared),
+           stat = "identity", width = 1) +
+  scale_fill_manual(values = slope_colors, name = "Slope Direction") +
+  scale_alpha(range = c(0.3, 1), guide = "none") +
+  ggnewscale::new_scale_fill() +
+  
+  # another outer ring showing mean expression heatmap
+  geom_rect(data = df,
+            aes(xmin = angle - 0.3, xmax = angle + 0.3,
+               ymin = 1.45, ymax = 1.55,
+                fill = gene_means), # or mean_exp_scaled
+            inherit.aes = FALSE) +
+  scale_fill_viridis_c(option = "mako", name = "Mean Expression", direction = -1)+
+  ggnewscale::new_scale_fill() +
+  
+  # Disease association bars (inward/outward)
+  # Disease Ring (middle)
+  geom_rect(data = df %>% filter(disease_term%in% names(disease_colors)),
+            aes(xmin = angle - 0.2, xmax = angle + 0.2,
+                ymin = ifelse(slope_direction == "positive", 1.2, 1.2),
+                ymax = ifelse(slope_direction == "positive", 1.35, 1.05),
+                fill = disease_term),
+            inherit.aes = FALSE) +
+  scale_fill_manual(values = disease_colors, name = "JENSSEN Disease Association") +
+  ggnewscale::new_scale_fill() +
+  # rare Disease Ring (middle)
+  geom_rect(data = df %>% filter(rare_term%in% names(rare_colors)),
+            aes(xmin = angle - 0.2, xmax = angle + 0.2,
+                ymin = ifelse(slope_direction == "positive", 1.75, 1.75),
+                ymax = ifelse(slope_direction == "positive", 1.9, 1.6),
+                fill = rare_term),
+            inherit.aes = FALSE) +
+  scale_fill_manual(values = rare_colors, name = "Rare Disease Association") +
+  ggnewscale::new_scale_fill() +
+  # GO term pvalue tile for each bracket
+  geom_tile(
+    data = go_df,
+    aes(x = angle, y = 2.5, fill = logp),
+    width = 2,     # adjust for visual density
+    height = 0.15,
+    inherit.aes = FALSE
+  )+
+  scale_fill_viridis_c(option = "mako", name = "-log10(adj. p-value)", direction = -1)+
+  
+  # Bracket labels
+  geom_text(data = bracket_labels,
+            aes(x = angle, y = (-1.2), label = label),
+            size = 1.8,
+            angle = 0,
+            color = "ivory",
+            hjust = 0.5) +
+  
+  # Bracket separators just to separate brackets visually
+  geom_segment(data = bracket_separators,
+               aes(x = angle, xend = angle, y = -1, yend = 2),
+               color = "ivory", size = 0.5) +
+  
+  # Radial gridlines to separate rings
+  geom_hline(yintercept = c(0, 1.2), color = "ivory", size = 0.5) +
+  geom_hline(yintercept = c(0, 1.75), color = "ivory", size = 0.5) +
+  geom_hline(yintercept = c(0, 1.95), color = "darkgrey", size = 0.5) +
+  geom_hline(yintercept = c(-1, 1, 1.45, 1.55), color = "darkgrey", size = 0.5) +
+
+# labels for certain diseases. create multiple to cover multiple terms with different colors. eg. matching with above.
+  geom_segment(data = df_labels,
+               aes(x = angle, xend = angle, y = 1.96, yend = 2),
+               inherit.aes = FALSE,
+               color = "#FF2DF1",
+               linewidth = 0.3)+
+ geom_text(data = df_labels,
+            aes(x = angle, y = 2.02, label = gene),
+            size = 1.5,
+            angle = 90,
+            hjust = 0,
+            vjust = 0.5,
+            color = "#FF2DF1",
+            inherit.aes = FALSE)+
+
+# text of the top5 go terms for each bracket. besically next to the tiles above.
+# just the id
+  geom_text(data = go_df,
+            aes(x = angle-0.2, y = 2.6, label = go_id,
+                angle = 90),
+             size = 2,
+            color = "ivory",
+            hjust = 0)+
+# just the text next to it
+  geom_text(data = go_df,
+            aes(x = angle+1.5, y = 2.6, label = term_name,
+                angle = 90),
+            size = 2,
+            color = "ivory",
+            hjust = 0)+
+# general labels 
+  geom_text(
+            aes(x = -3, y = 2.4, label = "Top 5 GO Term Biological function"),
+            size = 3,
+            angle = 90,
+            hjust = 0,
+            vjust = 0.5,
+            color = "ivory",
+            inherit.aes = FALSE)+
+  geom_text(
+    aes(x = -3, y = 1.52, label = "Mean Expression"),
+    size = 1.5,
+    angle = 0,
+    hjust = 1,
+    vjust = 0.5,
+    color = "ivory",
+    inherit.aes = FALSE)+
+  geom_text(
+    aes(x = -3, y = 1.35, label = "Disease Linked cor"),
+    size = 1.5,
+    angle = 0,
+    hjust = 1,
+    vjust = 0.5,
+    color = "ivory",
+    inherit.aes = FALSE)+
+  geom_text(
+    aes(x = -3, y = 1.15, label = "Disease Linked anticor"),
+    size = 1.5,
+    angle = 0,
+    hjust = 1,
+    vjust = 0.5,
+    color = "ivory",
+    inherit.aes = FALSE)+
+  geom_text(
+    aes(x = -4.5, y = 0, label = "Slope"),
+    size = 3,
+    angle = 90,
+    hjust = 0.5,
+    vjust = 0.5,
+    color = "ivory",
+    inherit.aes = FALSE)+
+# the part that makes it all radial. setting the inner radius, set start and end.  
+  coord_radial(inner.radius = 0.2, r.axis.inside = T,
+               rotate.angle = T, expand = F,
+               start = 0.1*pi, end = 2*pi, clip = "off") +
+# makes dark background style
+  theme_unique_dark()+
+  theme(legend.position = "right")
