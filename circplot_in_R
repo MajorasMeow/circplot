@@ -28,7 +28,42 @@ df <- df %>%
 df <- df %>%
   left_join(rare_long %>% select(gene, rare_term = Term), by = "gene")
 
-# create GO term dataframe from all genes per bracket
+# disease GO terms for disease association. shows you all available dbs
+library(enrichR)
+if (websiteLive) {
+  setEnrichrSite("Enrichr") # selects human genes
+  dbs <- listEnrichrDbs()
+  head(dbs)
+} 
+# add desired GO dbs
+dbs<- c("Jensen_DISEASES_Curated_2025",
+        "Rare_Diseases_GeneRIF_Gene_Lists"
+        )
+# checks all genes for disease association (or other dbs if chosen)
+enriched <- enrichr(unique(df$gene), dbs)
+# sort top terms per gene into a dataframe.
+# create multiple for multiple dbs if you like and want to add further layers. this now uses two dbs.
+disease_enrich <- enriched[["Jensen_DISEASES_Curated_2025"]]
+rare_enrich <- enriched[["Rare_Diseases_GeneRIF_Gene_Lists"]]
+# give back top term
+disease_long <- disease_enrich %>%
+  select(Term, Genes, Adjusted.P.value) %>%
+  separate_rows(Genes, sep = ";|,") %>%
+  rename(gene = Genes) %>%
+  mutate(gene = str_trim(gene)) %>%
+  group_by(gene) %>%
+  slice_min(Adjusted.P.value, n = 1, with_ties = FALSE) %>%
+  ungroup()
+rare_long <- rare_enrich %>%
+  select(Term, Genes, Adjusted.P.value) %>%
+  separate_rows(Genes, sep = ";|,") %>%
+  rename(gene = Genes) %>%
+  mutate(gene = str_trim(gene)) %>%
+  group_by(gene) %>%
+  slice_min(Adjusted.P.value, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+# create Biological function GO term dataframe from all genes per bracket and takes the top 5 per bracket.
 go_db <- "GO_Biological_Process_2025" # or different
 brackets <- unique(df$r2_bracket)
 go_df <- purrr::map_dfr(brackets, function(bracket) {
@@ -60,7 +95,9 @@ go_df <- go_df %>%
   )
 go_df <- go_df %>%
   mutate(logp = -log10(p_value))
+
 # --- plot prep ---
+#dark theme
 theme_unique_dark <- function (base_size = 12, base_family = "") {
   ret <- (theme_bw(base_size = base_size, base_family = base_family) +
             theme(text = element_text(colour = "white"),
