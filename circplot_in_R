@@ -1,286 +1,522 @@
-
-library(tidyverse)
-library(ggrepel)
-
-# load dataset which should include columns: gene, adj_r_squared, p_value, slope, gene_means
-df<-read.csv("your_gene_correlation_data.csv")
-
-# --- data preparation ---
-# filter by mean expression
-df<-filter(df, gene_means>0.1)
-
-df <- df %>%
-  mutate(slope_direction = ifelse(slope >= 0, "positive", "negative"))
-sets brackets for eac r square in 0.1 increments
-df <- df %>%
-  mutate(r2_bracket = cut(adj_r_squared,
-                          breaks = seq(0, 1, by = 0.1),
-                          include.lowest = TRUE,
-                          right = FALSE,
-                          labels = paste0("R² ", seq(0, 0.9, by = 0.1), "-", seq(0.1, 1.0, by = 0.1))))
-# adding -log10(p_value) for better contrast
-df <- df %>%
-  mutate(logp = -log10(p_value),
-         alpha_val = scales::rescale(logp, to = c(0.3, 1)))  # adjust alpha here
-# pulls matching GO disease term from a dataframe called disease_long, which has columns: gene, term. same with rare_long for rare diseases, just another GO dbs
-df <- df %>%
-  left_join(disease_long %>% select(gene, disease_term = Term), by = "gene")
-df <- df %>%
-  left_join(rare_long %>% select(gene, rare_term = Term), by = "gene")
-
-# disease GO terms for disease association. shows you all available dbs
-library(enrichR)
-if (websiteLive) {
-  setEnrichrSite("Enrichr") # selects human genes
-  dbs <- listEnrichrDbs()
-  head(dbs)
-} 
-# add desired GO dbs
-dbs<- c("Jensen_DISEASES_Curated_2025",
-        "Rare_Diseases_GeneRIF_Gene_Lists"
+circ_plot <- function(cor_data, 
+                      expr_data, 
+                      mean_cutoff = 0.1, 
+                      top_GO_BIO_terms = 5, 
+                      disease_GO = TRUE, 
+                      GOI = c(), 
+                      species = "fly", 
+                      save = FALSE, 
+                      read = FALSE,
+                      savename = "corplot_df.csv", 
+                      alpha_col = FALSE,
+                      pos_color = "#ff084a",
+                      neg_color = "#005582",
+                      viridis_color = "mako"){
+  library(tidyverse)
+  library(ggforce)      # for radial layout
+  library(ggnewscale)   # to use multiple fill scales
+  library(scales)
+  
+  # data preparation
+  if (read==FALSE){
+    gene_means <- data.frame(colMeans(expr_data, na.rm = TRUE))
+    gene_means <- tibble::rownames_to_column(gene_means, "gene")%>%
+      filter(gene %in% cor_data$gene)
+    colnames(gene_means)<-c("gene", "mean")
+    cor_data <- cor_data %>%
+      left_join(gene_means, by = "gene")
+    
+    cor_data<-filter(cor_data, mean>mean_cutoff)
+    
+    
+    cor_data <- cor_data %>%
+      mutate(slope_direction = ifelse(slope >= 0, "positive", "negative"),
+             r2_bracket = cut(adj_r_squared,
+                              breaks = seq(0, 1, by = 0.1),
+                              include.lowest = TRUE,
+                              right = FALSE,
+                              labels = paste0("R² ", seq(0, 0.9, by = 0.1), "-", seq(0.1, 1.0, by = 0.1))))%>%
+      arrange(adj_r_squared) %>%
+      mutate(angle = row_number() * (360 / n()))
+    if (alpha_col==TRUE){
+      cor_data <- cor_data %>%
+        mutate(logp = -log10(p_value),
+               alpha_val = scales::rescale(logp, to = c(0.3, 1))) 
+    }
+    cor_data <- cor_data %>%
+      group_by(r2_bracket) %>%
+      mutate(gene_index = row_number(abs(slope)) # sort by abs(slope), ascending
+      ) %>%
+      ungroup()
+    
+    ## GO terms
+    if (species == "fly"){
+      go_db <- "GO_Biological_Process_2018" # for fly
+    } else if (species== "human"){
+      go_db <- "GO_Biological_Process_2025"
+    }
+    
+    brackets <- unique(cor_data$r2_bracket)
+    
+    go_df <- purrr::map_dfr(brackets, function(bracket) {
+      gene_list <- cor_data %>%
+        filter(r2_bracket == bracket) %>%
+        pull(gene)
+      
+      enr <- enrichr(gene_list, go_db)[[go_db]]
+      
+      if (is.null(enr)) return(NULL)
+      
+      enr %>%
+        arrange(Adjusted.P.value) %>%
+        slice_head(n = 5) %>% 
+        select(term = Term, p_value = Adjusted.P.value) %>%
+        mutate(r2_bracket = bracket)
+    })
+    
+    go_df <- go_df %>%
+      arrange(r2_bracket, desc(p_value)) %>% # sort within group by logp
+      mutate(angle = rev(seq(0, 360, length.out = n() + 1)[-1]), # assign highest angle to top row
+             term_name = stringr::str_remove(term, "\\s*\\(GO:\\d+\\)$"),
+             go_id = stringr::str_extract(term, "GO:\\d+"),
+             logp = -log10(p_value)) 
+    
+    ## disease terms
+    if (species == "fly"){
+      if (getOption("enrichR.live")) {
+        setEnrichrSite("FlyEnrichr") # selects fly genes
+        dbs <- c(#"GO_Molecular_Function_2018", #1
+          #"GO_Cellular_Component_2018", #2
+          #"GO_Biological_Process_2018", #3
+          #"Coexpression_Predicted_GO_Cellular_Component_2018", #4
+          #"Coexpression_Predicted_GO_Molecular_Function_2018", #5
+          #"Coexpression_Predicted_GO_Biological_Process_2018", #6
+          #"GO_Molecular_Function_AutoRIF", #7
+          #"GO_Cellular_Component_AutoRIF", #8
+          #"GO_Biological_Process_AutoRIF", #9
+          "Human_Disease_from_FlyBase_2017") #10
+        enriched <- enrichr(unique(cor_data$gene), dbs)
+        disease_enrich <- enriched[["Human_Disease_from_FlyBase_2017"]]
+        # give back top term
+        disease_long <- disease_enrich %>%
+          select(Term, Genes, Adjusted.P.value) %>%
+          separate_rows(Genes, sep = ";|,") %>%
+          rename(gene = Genes) %>%
+          mutate(gene = str_trim(gene)) %>%
+          group_by(gene) %>%
+          slice_min(Adjusted.P.value, n = 1, with_ties = FALSE) %>%
+          ungroup()
+      }
+    } else if (species == "human"){
+      if (getOption("enrichR.live")) {
+        setEnrichrSite("Enrichr") # selects fly genes
+        dbs<- c(#"Jensen_DISEASES",
+          #"HomoloGene",
+          "Rare_Diseases_GeneRIF_Gene_Lists",
+          "Jensen_DISEASES_Curated_2025",
+          #"GO_Biological_Process_2025",
+          #"IDG_Drug_Targets_2022",
+          #"ChEA_2022",
+          #"Metabolomics_Workbench_Metabolites_2022",
+          #"GWAS_Catalog_2023"
         )
-# checks all genes for disease association (or other dbs if chosen)
-enriched <- enrichr(unique(df$gene), dbs)
-# sort top terms per gene into a dataframe.
-# create multiple for multiple dbs if you like and want to add further layers. this now uses two dbs.
-disease_enrich <- enriched[["Jensen_DISEASES_Curated_2025"]]
-rare_enrich <- enriched[["Rare_Diseases_GeneRIF_Gene_Lists"]]
-# give back top term
-disease_long <- disease_enrich %>%
-  select(Term, Genes, Adjusted.P.value) %>%
-  separate_rows(Genes, sep = ";|,") %>%
-  rename(gene = Genes) %>%
-  mutate(gene = str_trim(gene)) %>%
-  group_by(gene) %>%
-  slice_min(Adjusted.P.value, n = 1, with_ties = FALSE) %>%
-  ungroup()
-rare_long <- rare_enrich %>%
-  select(Term, Genes, Adjusted.P.value) %>%
-  separate_rows(Genes, sep = ";|,") %>%
-  rename(gene = Genes) %>%
-  mutate(gene = str_trim(gene)) %>%
-  group_by(gene) %>%
-  slice_min(Adjusted.P.value, n = 1, with_ties = FALSE) %>%
-  ungroup()
-
-# create Biological function GO term dataframe from all genes per bracket and takes the top 5 per bracket.
-go_db <- "GO_Biological_Process_2025" # or different
-brackets <- unique(df$r2_bracket)
-go_df <- purrr::map_dfr(brackets, function(bracket) {
-  gene_list <- df %>%
-    filter(r2_bracket == bracket) %>%
-    pull(gene)
+        enriched <- enrichr(unique(cor_data$gene), dbs)
+        
+        disease_enrich <- enriched[["Jensen_DISEASES_Curated_2025"]]
+        rare_enrich <- enriched[["Rare_Diseases_GeneRIF_Gene_Lists"]]
+        
+        # give back top term
+        disease_long <- disease_enrich %>%
+          select(Term, Genes, Adjusted.P.value) %>%
+          separate_rows(Genes, sep = ";|,") %>%
+          rename(gene = Genes) %>%
+          mutate(gene = str_trim(gene)) %>%
+          group_by(gene) %>%
+          slice_min(Adjusted.P.value, n = 1, with_ties = FALSE) %>%
+          ungroup()
+        
+        rare_long <- rare_enrich %>%
+          select(Term, Genes, Adjusted.P.value) %>%
+          separate_rows(Genes, sep = ";|,") %>%
+          rename(gene = Genes) %>%
+          mutate(gene = str_trim(gene)) %>%
+          group_by(gene) %>%
+          slice_min(Adjusted.P.value, n = 1, with_ties = FALSE) %>%
+          ungroup()
+        
+      }
+    }
+    
+    
+    cor_data <- cor_data %>%
+      left_join(disease_long %>% select(gene, disease_term = Term), by = "gene")
+    
+    if (species == "human"){
+      cor_data <- cor_data %>%
+        left_join(rare_long %>% select(gene, rare_term = Term), by = "gene")
+    } 
+    cor_data <- cor_data %>%
+      mutate(
+        slope_direction = factor(slope_direction, levels = c("negative", "positive")),
+        disease_term = replace_na(disease_term, "None"),
+        disease_bar = case_when(
+          disease_term == "None" ~ 0,
+          slope_direction == "positive" ~ 0.15,
+          slope_direction == "negative" ~ -0.15
+        )
+      )
+    ## gene labels
+    
+    if (species=="fly"){
+      alzheimer_genes <- pull(filter(cor_data, disease_term == "Alzheimer's disease"), gene)
+      parkinson_genes <- pull(filter(cor_data, disease_term == "Parkinson's disease"), gene)
+      als_genes <- pull(filter(cor_data, disease_term == "amyotrophic lateral sclerosis"), gene)
+      SCA3_genes <- pull(filter(cor_data, disease_term == "Machado-Joseph disease"), gene)
+      tauopathy_genes <- pull(filter(cor_data, disease_term == "tauopathy"), gene)
+      HSP_genes <- pull(filter(cor_data, disease_term == "hereditary spastic paraplegia"), gene)
+      nd_genes <- pull(filter(cor_data, disease_term == "neurodegenerative disease"), gene)
+      special_genes <- GOI
+    } else if (species=="human"){
+      alzheimer_genes <- pull(filter(cor_data, disease_term == "ALZHEIMER'S DISEASE"), gene)
+      parkinson_genes <- pull(filter(cor_data, disease_term == "PARKINSON's DISEASE"), gene)
+      als_genes <- pull(filter(cor_data, disease_term == "AMYOTROPHIC LATERAL SCLEROSIS"), gene)
+      SCA3_genes <- pull(filter(cor_data, disease_term == "MACHADO-JOSEPH disease"), gene)
+      tauopathy_genes <- pull(filter(cor_data, disease_term == "TAUOPATHY"), gene)
+      HSP_genes <- pull(filter(cor_data, disease_term == "hereditary spastic paraplegia"), gene)
+      nd_genes <- pull(filter(cor_data, disease_term == "NEURODEGENERATIVE DISEASE"), gene)
+      special_genes <- GOI
+    }
+    cor_data <- cor_data %>%
+      mutate(
+        gene_group = case_when(
+          gene %in% parkinson_genes ~ "parkinson",
+          gene %in% nd_genes ~ "nd",
+          gene %in% alzheimer_genes ~ "alzheimer",
+          gene %in% als_genes ~ "als",
+          gene %in% SCA3_genes ~ "SCA3",
+          gene %in% HSP_genes ~ "HSP",
+          gene %in% special_genes ~ "special",
+          gene %in% tauopathy_genes ~ "tauopathy",
+          TRUE ~ NA_character_
+        )
+      )
+    
+  } else if (read==TRUE){
+    cor_data<-read.csv("corplot_df.csv")
+    go_df<-read.csv("GO_DF_corplot_df.csv")
+  }
   
-  enr <- enrichr(gene_list, go_db)[[go_db]]
-  
-  if (is.null(enr)) return(NULL)
-  
-  enr %>%
-    arrange(Adjusted.P.value) %>%
-    slice_head(n = 5) %>% 
-    select(term = Term, p_value = Adjusted.P.value) %>%
-    mutate(r2_bracket = bracket)
-})
-# sets angles from x to x to match with gene data
-go_df <- go_df %>%
-  arrange(r2_bracket, desc(p_value)) %>%
-  mutate(
-    angle = seq(0, 360 - (360 / n()), length.out = n())+5 # change start and endpoints here from 0 to 360 is full circle. think in angles.
+  cor_data <- cor_data %>%
+    mutate(
+      label_y = case_when(
+        slope_direction == "negative" ~ (1.65),
+        slope_direction == "positive" ~ 2,
+        TRUE ~ 0
+      )
+    )
+  ## labels
+  n_brackets <- length(unique(cor_data$r2_bracket))
+  bracket_labels <- tibble(
+    r2_bracket = unique(cor_data$r2_bracket),
+    bracket_index = seq_along(r2_bracket),
+    angle = (bracket_index-0.5) * (360 / n_brackets),
+    label = paste0("R² ", gsub("\\[|\\)", "", r2_bracket))
   )
-# splits GO terms so we can pull only the number if we want.
-go_df <- go_df %>%
-  mutate(
-    term_name = stringr::str_remove(term, "\\s*\\(GO:\\d+\\)$"),
-    go_id = stringr::str_extract(term, "GO:\\d+")
+  bracket_lines <- cor_data %>%
+    group_by(r2_bracket) %>%
+    summarise(start = min(angle), end = max(angle), .groups = "drop")
+  
+  bracket_separators <- tibble(
+    angle = seq(0, 360, length.out = n_brackets+1)
   )
-go_df <- go_df %>%
-  mutate(logp = -log10(p_value))
+  
+  slope_colors <- c("positive" = pos_color, "negative" = neg_color)
+  
+  pd_color<- "#800080"
+  nd_color<-"darkgrey"
+  tau_color<-"#004444"
+  ad_color<-"#009688"
+  als_color<-"#ce4993"
+  hsp_color<-"#6baed6"
+  sca3_color<-"#005073"
+  ataxia_color<-"#107dac"
+  cmt_color<-"#a4c639"
+  special_color <-"black"
+  viral_color <- "#d4cc56"
+  
+  if (species == "fly"){
+    disease_colors <- c(
+      # Neurodegenerative
+      "neurodegenerative disease" = nd_color,  
+      "tauopathy" = tau_color,                 
+      "Parkinson's disease" = pd_color,       
+      #"Huntington's disease" = "#fb9a99",      
+      "Alzheimer's disease" = ad_color,
+      # Motor neuron / ALS
+      "amyotrophic lateral sclerosis" = als_color,  
+      #"Troyer syndrome" = "#F97A00",
+      
+      # Ataxia / HSP
+      "Friedreich ataxia" = ataxia_color,  
+      "spinocerebellar ataxia type 31" = ataxia_color,  
+      #"olivopontocerebellar atrophy" = "#5dade2",
+      "autosomal dominant cerebellar ataxia" = ataxia_color,
+      "hereditary spastic paraplegia" = hsp_color,
+      "Machado-Joseph disease" = sca3_color,
+      
+      # Retinal
+      "retinal degeneration" = "#495054", 
+      
+      # Metabolic / storage
+      #"Niemann-Pick disease" = "#1c9099",
+      #"Leigh disease" = "#67a9cf",
+      #"Alexander disease" = "#3288bd",
+      #"neuronal ceroid lipofuscinosis" = "#5e4fa2",
+      
+      # CMT
+      "Charcot-Marie-Tooth disease" = cmt_color,
+      
+      # Infectious
+      "viral infectious disease" = viral_color,
+      
+      # Default
+      "None" = "transparent"
+    )
+    rare_colors<-c()
+  } else if (species == "human"){
+    disease_colors <- c(
+      # Neurodegenerative
+      "NEURODEGENERATIVE DISEASE" = nd_color,  
+      "tauopathy" = tau_color,                 
+      "PARKINSON'S DISEASE" = pd_color,       
+      #"Huntington's disease" = "#fb9a99",      
+      "ALZHEIMER'S DISEASE" = ad_color,
+      
+      # Motor neuron / ALS
+      "AMYOTROPHIC LATERAL SCLEROSIS" = als_color,  # purple
+      #"Troyer syndrome" = "#F97A00",
+      
+      # Ataxia / HSP
+      "CEREBELLAR ATAXIA" = ataxia_color,  # blue
+      "HEREDITARY ATAXIA" = ataxia_color,  # greenish-blue
+      #"olivopontocerebellar atrophy" = "#5dade2",
+      "AUTOSOMAL DOMINANT CEREBELLAR ATAXIA" = ataxia_color,
+      "HEREDITARY SPASTIC PARAPLEGIA" = hsp_color,
+      
+      
+      # Retinal
+      "RETINAL DEGENERATION" = "#495054",  # gray
+      
+      # Metabolic / storage
+      #"Niemann-Pick disease" = "#1c9099",
+      #"Leigh disease" = "#67a9cf",
+      #"Alexander disease" = "#3288bd",
+      #"ITM2B-RELATED CEREBRAL AMYLOID ANGIOPATHY 2" = "#5e4fa2",
+      
+      # CMT
+      "CHARCOT-MARIE-TOOTH DISEASE" = cmt_color,
+      "PERIPHERAL NERVOUS SYSTEM DISEASE" = "darkblue",
+      # Infectious
+      "VIRAL INFECTIOUS DISEASE" = viral_color,
+      
+      # Default
+      "NERVOUS SYSTEM DISEASE" = "#9ba8ae",
+      "RASOPATHY" = "#efbbff",
+      "NEUROPATHY" = "#ff93ac",
+      "CENTRAL NERVOUS SYSTEM DISEASE" = "#8ba0ae",
+      "None" = "transparent"
+    )
+    rare_colors <- c(
+      # Neurodegenerative
+      
+      "Alzheimer's disease without neurofibrillary tangles" = "#00635a",                 # in ad_color shades
+      "Parkinson disease 9" = "#be29ec",       # light red
+      "Parkinson disease juvenile autosomal recessive" = "#660066",       # light red
+      "Parkinsonism early onset with mental retardation" = "#800050",       # light red
+      #"Huntington's disease" = "#fb9a99",      # deep red
+      "Alzheimer disease familial" = "#00b09f",
+      
+      "Lewy body dementia" = "#500080",
+      
+      
+      # Motor neuron / ALS
+      "Amyloid neuropathy" = "#ce4992",  # purple
+      "Wallerian degeneration" = "#bccad0",
+      
+      # Ataxia / HSP
+      "CEREBELLAR ATAXIA" = "#005075",  # blue
+      "Hereditary ataxia" = "#108dae",  # greenish-blue
+      "Alexander disease" = "#107eac",
+      "autosomal dominant cerebellar ataxia" = "#105eac",
+      "Hereditary spastic paraplegia" = hsp_color,
+      
+      # Epilepsy
+      #"EPILEPSY" = "#8c510a",
+      
+      # Retinal
+      "retinal degeneration" = "#495054",  # gray
+      
+      # Metabolic / storage
+     # "Niemann-Pick disease" = "#1c9099",
+      #"Leigh disease" = "#67a9cf",
+      #"Alexander disease" = "#3288bd",
+      #"ITM2B-RELATED CEREBRAL AMYLOID ANGIOPATHY 2" = "#5e4fa2",
+      
+      # CMT
+      "CHARCOT-MARIE-TOOTH DISEASE" = cmt_color,
+      "PERIPHERAL NERVOUS SYSTEM DISEASE" = "darkblue",
+      # Infectious
+      "VIRAL INFECTIOUS DISEASE" = viral_color,
+      
+      # Default
+      "NERVOUS SYSTEM DISEASE" = "#9ba8ae",
+      "RASOPATHY" = "#efbbff",
+      "NEUROPATHY" = "#ff93ac",
+      "None" = "transparent"
+    )
+  }
+  
+  assigned_colors <- c(
+    "nd" = nd_color,
+    "parkinson" = pd_color,
+    "alzheimer" = ad_color,
+    "ALS" = als_color,
+    "SCA3" = sca3_color,
+    "HSP" = hsp_color,
+    "ataxia" = ataxia_color,
+    "cmt" = cmt_color,
+    "tauopathy" = tau_color,
+    "special" = special_color,
+    "viral" = viral_color
+  )
+  
+  if (save==TRUE){
+    write.csv(cor_data, savename)
+    write.csv(go_df, paste0("GO_DF_", savename))
+  }
+  
+  ##### PLOT
+  
+  plot <- ggplot() +
+    
+    # Slope bars
+    geom_bar(data = cor_data,
+             aes(x = angle, y = slope, fill = slope_direction, alpha = adj_r_squared
+             ),
+             stat = "identity", width = 1) +
+    scale_fill_manual(values = slope_colors, name = "Slope Direction") +
+    ggnewscale::new_scale_fill() +
+    # disease bars
+    geom_rect(data = cor_data %>% filter(disease_term%in% names(disease_colors)),
+              aes(xmin = angle - 0.2, xmax = angle + 0.2,
+                  ymin = ifelse(slope_direction == "positive", 1.2, 1.2),
+                  ymax = ifelse(slope_direction == "positive", 1.35, 1.05),
+                  fill = disease_term),
+              inherit.aes = FALSE) +
+    scale_fill_manual(values = disease_colors, name = "Disease Association")+
+    ggnewscale::new_scale_fill() +
+    
+    
+    # Mean expression heatmap ring
+      geom_rect(data = cor_data,
+                aes(xmin = angle - 0.3, xmax = angle + 0.3,
+                    ymin = 1.45, ymax = 1.55,
+                    fill = mean), # or mean_exp_scaled
+                inherit.aes = FALSE) +
+      scale_fill_viridis_c(option = viridis_color, name = "Mean Expression", direction = -1)+
+      ggnewscale::new_scale_fill() +
+    
+    # Go TERM pval
+    geom_tile(
+      data = go_df,
+      aes(x = angle, y = 2.5, fill = logp),
+      width = 2,     # adjust for visual density
+      height = 0.15,
+      inherit.aes = FALSE
+    )+
+    scale_fill_viridis_c(option = viridis_color, name = "-log10(adj. p-value)", direction = -1)+
+    # Radial gridlines
+    geom_hline(yintercept = c(0, 1.2), color = "black", size = 0.5) +
+    geom_hline(yintercept = c(0, 2.3), color = "grey30", size = 0.5) +
+    geom_hline(yintercept = c(0, 1.95), color = "black", size = 0.5) +
+    geom_hline(yintercept = c(-1, 1, 1.45, 1.55), color = "darkgrey", size = 0.5) +
+    #
+    # GO labels
+    geom_text(data = go_df,
+              aes(x = angle-1, y = 2.6, label = go_id,
+                  angle = 90),
+              size = 2,
+              color = "black",
+              hjust = 0)+
+    geom_text(data = go_df,
+              aes(x = angle+1, y = 2.6, label = term_name,
+                  angle = 90),
+              size = 2,
+              color = "black",
+              hjust = 0)+
+    # gene labels
+    geom_text(
+      data = filter(cor_data, !is.na(gene_group)),
+      aes(x = angle, y = label_y, label = gene, color = gene_group),
+      size = 1.5,
+      angle = 90,
+      hjust = 0,
+      vjust = 0.5,
+      inherit.aes = FALSE
+    ) +
+    scale_color_manual(values = assigned_colors)+
+    
+    geom_text(
+      aes(x = -3, y = 2.4, label = "Top 5 GO Term Biological function"),
+      size = 3,
+      angle = 90,
+      hjust = 0,
+      vjust = 0.5,
+      color = "black",
+      inherit.aes = FALSE)+
+    geom_text(
+      aes(x = -3, y = 1.52, label = "Mean Expression"),
+      size = 1.5,
+      angle = 0,
+      hjust = 1,
+      vjust = 0.5,
+      color = "black",
+      inherit.aes = FALSE)+
+    geom_text(
+      aes(x = -3, y = 1.35, label = "Disease Linked cor"),
+      size = 1.5,
+      angle = 0,
+      hjust = 1,
+      vjust = 0.5,
+      color = "black",
+      inherit.aes = FALSE)+
+    geom_text(
+      aes(x = -3, y = 1.15, label = "Disease Linked anticor"),
+      size = 1.5,
+      angle = 0,
+      hjust = 1,
+      vjust = 0.5,
+      color = "black",
+      inherit.aes = FALSE)+
+    geom_text(
+      aes(x = -4.5, y = 0, label = "Slope"),
+      size = 3,
+      angle = 90,
+      hjust = 0.5,
+      vjust = 0.5,
+      color = "black",
+      inherit.aes = FALSE)+
+    
+    
+    coord_radial(inner.radius = 0.2, r.axis.inside = T,
+                                rotate.angle = T, expand = F,
+                                start = 0.1*pi, end = 2*pi, clip = "off") +
+    labs(x = NULL, y = NULL) +
+                   
+    theme(legend.position = "right",
+          axis.text    = element_blank(),
+          axis.ticks   = element_blank())
+  
 
-# --- plot prep ---
-#dark theme
-theme_unique_dark <- function (base_size = 12, base_family = "") {
-  ret <- (theme_bw(base_size = base_size, base_family = base_family) +
-            theme(text = element_text(colour = "white"),
-                  title = element_text(color = "white"),
-                  line = element_line(color = "white"),
-                  rect = element_rect(fill = "black", color = "white"),
-                 # axis.ticks = element_line(color = "#969696"),
-                #  axis.title = element_text(color = "white"),
-                 # axis.text = element_text(color = "#eaeaea"),
-                #  axis.line = element_line(color = "#969696", linetype = 1),
-                  legend.background = element_rect(fill = NULL, color = NULL),
-                  legend.position = "bottom",
-                  legend.key = element_rect(fill = NA, color = NA, linetype = 0),
-                  strip.background = element_rect(fill=NA,colour=NA,size=NA,linetype = NULL),
-                  strip.text = element_text(color="white",face="bold",vjust=.5,hjust=.5),
-                  panel.background = element_rect(fill = "black", color = NULL),
-                  panel.border = element_blank(),
-                  panel.grid = element_line(color = "#252525"),
-                  panel.grid.major = element_line(color = "#353535"),
-                  panel.grid.minor = element_line(color = "#101010"),
-                  plot.background = element_rect(fill = "black", colour = "black", linetype = 0)))
-  ret
+  return(plot)
 }
-
-# Define color for slope direction
-slope_colors <- c("positive" = "darkred", "negative" = "darkblue")
-
-# Define colors for disease terms as a vector
-disease_colors <- c(
-  "neurodegenerative disease" = "ivory") # example. terms have to be aligned to GO terms from database you take.
-rare_colors <- c(
-  "neurodegenerative disease" = "ivory") # example. terms have to be aligned to GO terms from database you take.
-# highlight genes via disease term
-highlight_genes <- df %>%
-  filter(disease_term == "neurodegenerative disease") %>%
-  pull(gene)
-df_labels <- df %>%
-  filter(gene %in% highlight_genes)
-
-# --- PLOT ---
-
-ggplot() +
-  
-  # inner ring: slope inward and outward from 0 showing negative and positive correlation, respectively.
-  geom_bar(data = df,
-           aes(x = angle, y = slope, fill = slope_direction, alpha = adj_r_squared),
-           stat = "identity", width = 1) +
-  scale_fill_manual(values = slope_colors, name = "Slope Direction") +
-  scale_alpha(range = c(0.3, 1), guide = "none") +
-  ggnewscale::new_scale_fill() +
-  
-  # another outer ring showing mean expression heatmap
-  geom_rect(data = df,
-            aes(xmin = angle - 0.3, xmax = angle + 0.3,
-               ymin = 1.45, ymax = 1.55,
-                fill = gene_means), # or mean_exp_scaled
-            inherit.aes = FALSE) +
-  scale_fill_viridis_c(option = "mako", name = "Mean Expression", direction = -1)+
-  ggnewscale::new_scale_fill() +
-  
-  # Disease association bars (inward/outward)
-  # Disease Ring (middle)
-  geom_rect(data = df %>% filter(disease_term%in% names(disease_colors)),
-            aes(xmin = angle - 0.2, xmax = angle + 0.2,
-                ymin = ifelse(slope_direction == "positive", 1.2, 1.2),
-                ymax = ifelse(slope_direction == "positive", 1.35, 1.05),
-                fill = disease_term),
-            inherit.aes = FALSE) +
-  scale_fill_manual(values = disease_colors, name = "JENSSEN Disease Association") +
-  ggnewscale::new_scale_fill() +
-  # rare Disease Ring (middle)
-  geom_rect(data = df %>% filter(rare_term%in% names(rare_colors)),
-            aes(xmin = angle - 0.2, xmax = angle + 0.2,
-                ymin = ifelse(slope_direction == "positive", 1.75, 1.75),
-                ymax = ifelse(slope_direction == "positive", 1.9, 1.6),
-                fill = rare_term),
-            inherit.aes = FALSE) +
-  scale_fill_manual(values = rare_colors, name = "Rare Disease Association") +
-  ggnewscale::new_scale_fill() +
-  # GO term pvalue tile for each bracket
-  geom_tile(
-    data = go_df,
-    aes(x = angle, y = 2.5, fill = logp),
-    width = 2,     # adjust for visual density
-    height = 0.15,
-    inherit.aes = FALSE
-  )+
-  scale_fill_viridis_c(option = "mako", name = "-log10(adj. p-value)", direction = -1)+
-  
-  # Bracket labels
-  geom_text(data = bracket_labels,
-            aes(x = angle, y = (-1.2), label = label),
-            size = 1.8,
-            angle = 0,
-            color = "ivory",
-            hjust = 0.5) +
-  
-  # Bracket separators just to separate brackets visually
-  geom_segment(data = bracket_separators,
-               aes(x = angle, xend = angle, y = -1, yend = 2),
-               color = "ivory", size = 0.5) +
-  
-  # Radial gridlines to separate rings
-  geom_hline(yintercept = c(0, 1.2), color = "ivory", size = 0.5) +
-  geom_hline(yintercept = c(0, 1.75), color = "ivory", size = 0.5) +
-  geom_hline(yintercept = c(0, 1.95), color = "darkgrey", size = 0.5) +
-  geom_hline(yintercept = c(-1, 1, 1.45, 1.55), color = "darkgrey", size = 0.5) +
-
-# labels for certain diseases. create multiple to cover multiple terms with different colors. eg. matching with above.
-  geom_segment(data = df_labels,
-               aes(x = angle, xend = angle, y = 1.96, yend = 2),
-               inherit.aes = FALSE,
-               color = "#FF2DF1",
-               linewidth = 0.3)+
- geom_text(data = df_labels,
-            aes(x = angle, y = 2.02, label = gene),
-            size = 1.5,
-            angle = 90,
-            hjust = 0,
-            vjust = 0.5,
-            color = "#FF2DF1",
-            inherit.aes = FALSE)+
-
-# text of the top5 go terms for each bracket. besically next to the tiles above.
-# just the id
-  geom_text(data = go_df,
-            aes(x = angle-0.2, y = 2.6, label = go_id,
-                angle = 90),
-             size = 2,
-            color = "ivory",
-            hjust = 0)+
-# just the text next to it
-  geom_text(data = go_df,
-            aes(x = angle+1.5, y = 2.6, label = term_name,
-                angle = 90),
-            size = 2,
-            color = "ivory",
-            hjust = 0)+
-# general labels 
-  geom_text(
-            aes(x = -3, y = 2.4, label = "Top 5 GO Term Biological function"),
-            size = 3,
-            angle = 90,
-            hjust = 0,
-            vjust = 0.5,
-            color = "ivory",
-            inherit.aes = FALSE)+
-  geom_text(
-    aes(x = -3, y = 1.52, label = "Mean Expression"),
-    size = 1.5,
-    angle = 0,
-    hjust = 1,
-    vjust = 0.5,
-    color = "ivory",
-    inherit.aes = FALSE)+
-  geom_text(
-    aes(x = -3, y = 1.35, label = "Disease Linked cor"),
-    size = 1.5,
-    angle = 0,
-    hjust = 1,
-    vjust = 0.5,
-    color = "ivory",
-    inherit.aes = FALSE)+
-  geom_text(
-    aes(x = -3, y = 1.15, label = "Disease Linked anticor"),
-    size = 1.5,
-    angle = 0,
-    hjust = 1,
-    vjust = 0.5,
-    color = "ivory",
-    inherit.aes = FALSE)+
-  geom_text(
-    aes(x = -4.5, y = 0, label = "Slope"),
-    size = 3,
-    angle = 90,
-    hjust = 0.5,
-    vjust = 0.5,
-    color = "ivory",
-    inherit.aes = FALSE)+
-# the part that makes it all radial. setting the inner radius, set start and end.  
-  coord_radial(inner.radius = 0.2, r.axis.inside = T,
-               rotate.angle = T, expand = F,
-               start = 0.1*pi, end = 2*pi, clip = "off") +
-# makes dark background style
-  theme_unique_dark()+
-  theme(legend.position = "right")
