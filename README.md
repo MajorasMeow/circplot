@@ -60,8 +60,11 @@ cor_data <- linreg_genes(data, target_gene, adj_r2_threshold = 0, workers = 1) #
 
 circ_plot(cor_data =result, expr_data=data, read = F, save = T) 
 ```
-<img width="1074" height="782" alt="grafik" src="https://github.com/user-attachments/assets/464e9038-1f0d-425e-bab3-e81ef23bd6bf" />
+![img](https://github.com/user-attachments/assets/9c8b79ac-f0a0-4e44-b0dc-698d1017e463)
+
 ```r
 # perform circplot from file
 circ_plot(cor_data =result, expr_data=data, read = T, save = F) 
 ```
+
+change and add rings as you like!
