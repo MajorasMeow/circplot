@@ -11,10 +11,11 @@ circ_plot <- function(cor_data,
                       alpha_col = FALSE,
                       pos_color = "#ff084a",
                       neg_color = "#005582",
-                      viridis_color = "mako"){
+                      viridis_color = "mako",
+                      theme_color= "black"){
   library(tidyverse)
-  library(ggforce)      # for radial layout
-  library(ggnewscale)   # to use multiple fill scales
+  library(ggforce)      
+  library(ggnewscale)   
   library(scales)
   
   # data preparation
@@ -231,6 +232,17 @@ circ_plot <- function(cor_data,
   )
   
   slope_colors <- c("positive" = pos_color, "negative" = neg_color)
+  if(theme_color=="black"){
+    line_color<-"ivory"
+    text_color<-"ivory"
+    back_color<-"black"
+  }else if (theme_color== "white"){
+    line_color<-"black"
+    text_color<-"black"
+    back_color<-"white"
+  }else{
+    warning("theme color needs to be black or white...")
+  }
   
   pd_color<- "#800080"
   nd_color<-"darkgrey"
@@ -403,7 +415,7 @@ circ_plot <- function(cor_data,
     geom_bar(data = cor_data,
              aes(x = angle, y = slope, fill = slope_direction, alpha = adj_r_squared
              ),
-             stat = "identity", width = 1) +
+             stat = "identity", width = 1,show.legend = FALSE) +
     scale_fill_manual(values = slope_colors, name = "Slope Direction") +
     ggnewscale::new_scale_fill() +
     # disease bars
@@ -429,30 +441,30 @@ circ_plot <- function(cor_data,
     # Go TERM pval
     geom_tile(
       data = go_df,
-      aes(x = angle, y = 2.5, fill = logp),
+      aes(x = angle-4, y = 2.5, fill = logp),
       width = 2,     # adjust for visual density
       height = 0.15,
       inherit.aes = FALSE
     )+
     scale_fill_viridis_c(option = viridis_color, name = "-log10(adj. p-value)", direction = -1)+
     # Radial gridlines
-    geom_hline(yintercept = c(0, 1.2), color = "black", size = 0.5) +
+    geom_hline(yintercept = c(0, 1.2), color = line_color, size = 0.5) +
     geom_hline(yintercept = c(0, 2.3), color = "grey30", size = 0.5) +
-    geom_hline(yintercept = c(0, 1.95), color = "black", size = 0.5) +
+    geom_hline(yintercept = c(0, 2), color = line_color, size = 0.5) +
     geom_hline(yintercept = c(-1, 1, 1.45, 1.55), color = "darkgrey", size = 0.5) +
     #
     # GO labels
     geom_text(data = go_df,
-              aes(x = angle-1, y = 2.6, label = go_id,
+              aes(x = angle-5, y = 2.6, label = go_id,
                   angle = 90),
               size = 2,
-              color = "black",
+              color = text_color,
               hjust = 0)+
     geom_text(data = go_df,
-              aes(x = angle+1, y = 2.6, label = term_name,
+              aes(x = angle-3, y = 2.6, label = term_name,
                   angle = 90),
               size = 2,
-              color = "black",
+              color = text_color,
               hjust = 0)+
     # gene labels
     geom_text(
@@ -462,7 +474,8 @@ circ_plot <- function(cor_data,
       angle = 90,
       hjust = 0,
       vjust = 0.5,
-      inherit.aes = FALSE
+      inherit.aes = FALSE,
+      show.legend = FALSE
     ) +
     scale_color_manual(values = assigned_colors)+
     
@@ -472,7 +485,7 @@ circ_plot <- function(cor_data,
       angle = 90,
       hjust = 0,
       vjust = 0.5,
-      color = "black",
+      color = text_color,
       inherit.aes = FALSE)+
     geom_text(
       aes(x = -3, y = 1.52, label = "Mean Expression"),
@@ -480,7 +493,7 @@ circ_plot <- function(cor_data,
       angle = 0,
       hjust = 1,
       vjust = 0.5,
-      color = "black",
+      color = text_color,
       inherit.aes = FALSE)+
     geom_text(
       aes(x = -3, y = 1.35, label = "Disease Linked cor"),
@@ -488,7 +501,7 @@ circ_plot <- function(cor_data,
       angle = 0,
       hjust = 1,
       vjust = 0.5,
-      color = "black",
+      color = text_color,
       inherit.aes = FALSE)+
     geom_text(
       aes(x = -3, y = 1.15, label = "Disease Linked anticor"),
@@ -496,7 +509,7 @@ circ_plot <- function(cor_data,
       angle = 0,
       hjust = 1,
       vjust = 0.5,
-      color = "black",
+      color = text_color,
       inherit.aes = FALSE)+
     geom_text(
       aes(x = -4.5, y = 0, label = "Slope"),
@@ -504,7 +517,7 @@ circ_plot <- function(cor_data,
       angle = 90,
       hjust = 0.5,
       vjust = 0.5,
-      color = "black",
+      color = text_color,
       inherit.aes = FALSE)+
     
     
@@ -513,10 +526,26 @@ circ_plot <- function(cor_data,
                                 start = 0.1*pi, end = 2*pi, clip = "off") +
     labs(x = NULL, y = NULL) +
                    
-    theme(legend.position = "right",
-          axis.text    = element_blank(),
-          axis.ticks   = element_blank())
-  
+    theme(
+      panel.background    = element_rect(fill = back_color, color = NA),
+      plot.background     = element_rect(fill = back_color, color = NA),
+      panel.grid.major    = element_line(color = line_color, linewidth = 0.5),
+      panel.grid.minor    = element_blank(),
+      axis.text         = element_blank(),
+      axis.title        = element_blank(),
+      axis.ticks        = element_blank(),
+      legend.background   = element_rect(fill = back_color, color = NA),
+      legend.key          = element_rect(fill = back_color, color = NA),
+      legend.text         = element_text(color = text_color),
+      legend.title        = element_text(color = text_color),
+      strip.text          = element_text(color = text_color)
+    )+
+    scale_x_continuous(
+      breaks      = seq(0, 360, by = (360/n_brackets)),  
+      minor_breaks= NULL,                  
+      coord_cartesian(xlim = c(0, 360)),             
+      expand      = c(0, 0)                
+    )
 
   return(plot)
 }
