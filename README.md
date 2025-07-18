@@ -96,10 +96,12 @@ Think as the x-axis is bent circular (0-360) and the y-axis is radial (Here we u
 If we set our threshold to 0 we have 10 brackets, 9 for 0.1, 8 for 0.2...
 We can plot in a light "white" theme...
 
-![img](https://github.com/user-attachments/assets/9c8b79ac-f0a0-4e44-b0dc-698d1017e463)
+![white](https://github.com/user-attachments/assets/6d0d028c-6ffe-4d47-b659-32d7c0a8aebf)
 
 ...or as a black theme with ivory labels.
-
+```r
+circ_plot(cor_data =result, expr_data=data, read = T, save = F, theme_color = "black") 
+```
 ![black](https://github.com/user-attachments/assets/8c29d792-a86b-4257-a7e0-35b2ec2f1303)
 
 Change and add rings as you like!
