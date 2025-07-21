@@ -568,9 +568,11 @@ circ_plot <- function(cor_data,
       axis.ticks        = element_blank(),
       legend.background   = element_rect(fill = back_color, color = NA),
       legend.key          = element_rect(fill = back_color, color = NA),
-      legend.text         = element_text(color = text_color),
-      legend.title        = element_text(color = text_color),
-      strip.text          = element_text(color = text_color)
+      legend.text         = element_text(color = text_color, size = 6),
+      legend.title        = element_text(color = text_color, size = 6),
+      strip.text          = element_text(color = text_color),
+      legend.key.size = unit(0.3,"cm"),
+      legend.position = "right"
     )+
     scale_x_continuous(
       breaks      = seq(0, 360, by = (360/n_brackets)),  
