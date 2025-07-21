@@ -3,9 +3,11 @@ Function for a customizable publication-ready circular plot for integrated singl
 
 This tool is designed for visualizing the relationship between a gene of interest, its top correlated genes, their expression levels, and their functional annotations (GO terms) all in a single, intuitive plot.
 It function focuses by default on neurodegenerative disease annotation (from Jensen_DISEASES_Curated_2025 and Rare_Diseases_GeneRIF_Gene_Lists (human), or Human_Disease_from_FlyBase_2017 (Fly)) and Top 5 Biological Function GO Terms for each bracket of 0.1 R_squared increments.
+
 The plot axis is calculated by 360° but begins with a gap for visibility and labels.
 
-It takes gene correlation data and imputed scRNA expression data from a seurat file as input. For both preparatin steps from a seurat object see https://github.com/MajorasMeow/scRNA/blob/main/scfunctions.
+It takes gene correlation data and imputed scRNA expression data from a seurat file as input. For both preparation steps from a seurat object see https://github.com/MajorasMeow/scRNA/blob/main/scfunctions.
+
 
 ![blacksmall](https://github.com/user-attachments/assets/397bf6dd-8689-4124-a890-e9d858566e98)
 
@@ -22,10 +24,12 @@ install.packages(c(
   "ggrepel"      
 ))
 ```
-### install magic for imputation https://github.com/cran/Rmagic
-# EXAMPLE
+### Important for data preparation: install Rmagic for imputation https://github.com/cran/Rmagic
 
-We take the pbmc3k dataset from the SeuratData Package and want to find out which are high expressing genes that correlate with the gene CD68 in the whole dataset.
+
+# EXAMPLE Data preparation and Plot
+
+Let's take the pbmc3k dataset from the SeuratData Package and find out which are high expressing genes that correlate with the gene CD68 in the whole dataset.
 
 ### load and install the dataset
 ```r
@@ -58,9 +62,12 @@ data <- ImpData(pbmc3k)
 We chose our target gene and perform the regression analysis.
 ```r
 target_gene <- "CD68"
-cor_data <- linreg_genes(data, target_gene, adj_r2_threshold = 0, workers = 1) # adjust adj_r2 threshold if you aim to exclude any low correlation. set workers to whichever for parallel processing
+cor_data <- linreg_genes(data,
+                        target_gene,
+                        adj_r2_threshold = 0, # adjust adj_r2 threshold if you aim to exclude any low correlation. 
+                        workers = 1) # set workers to whichever suitable for parallel processing
 ```
-## 1. Plot your data 
+## 1. Load function
 
 First, load the circ_plot() function into your R session.
 It has the following arguments:
@@ -81,7 +88,7 @@ neg_color = "#005582"   # color for negative correlation
 viridis_color = "mako"  # choose viridis color for gene expression ring and for pval of GO Terms
 theme_color= "black"    # Can be black or white
 ```
-
+## 2. Double check for columns
 Sometimes we use non numerical or indexing columns etc for certain plots. Here we dont want them.
 Make sure no non numerical columns are in your dataset! Also indexing columns, trajectory values, or other non-expressing numerical columns should be excluded before.
 
@@ -92,13 +99,16 @@ data<-select(data, -c("ident",       # cluster name from AssignClusterLabels
                       "X"))          # indexing column
 ```
 
+## 3. Perform circplot calculation and save the file
+
 We want to plot our first with save= TRUE as this function prepares our data and uses enrichR for GO database queries.
 Once our function is done, we can set save = FALSE and read = TRUE to read directly from the saved csv.
 
 Also let's take a mean threshold of 0.5 so we just get the top expressed genes.
-The Plot has a default labeling for neurodegenererative disorders, but if no hits are available it labels all disease related genes found in The Jennsen and rare disease GO DB.
 
-# perform circplot calculation and save the file
+btw: The Plot has a default labeling for certain neurodegenererative disorders, but if no hits are available it labels all disease related genes found in The Jennsen and rare disease GO DB.
+You can also use the GOI argument to label specific genes.
+
 ```r
 circ_plot(cor_data =result, expr_data=data, read = F, save = T, mean_cutoff = 0.5)
 
@@ -107,9 +117,11 @@ plot<-circ_plot(cor_data =result, expr_data=data, read = T, save = F)
 plot
 ```
 Great! now we have our circular plot!
+
 Think as the x-axis is bent circular (0-360) and the y-axis is radial (Here we use low values as it is set to slope intensity). In theory you can add more layers and set y-values in their geom to n which defines the level of the object ring/label/etc. For distribution like the GO Biol. Function Terms, each Term and its value were mapped to a certain x-value across 360°. It shows the TOP 5 GO terms for each bracket of adj_r2.
 If we set our threshold to 0 we have 10 brackets, 9 for 0.1, 8 for 0.2...
-We can plot in a light "white" theme using theme_color="white
+
+We can plot in a light "white" theme using theme_color="white"
 ```r
 plot<-circ_plot(cor_data =result, expr_data=data, read = T, save = F, theme_color = "white")
 plot
@@ -121,8 +133,6 @@ plot
 plot<-circ_plot(cor_data =result, expr_data=data, read = T, save = F, theme_color = "black")
 plot
 ```
-
-
 ![blacksmall](https://github.com/user-attachments/assets/397bf6dd-8689-4124-a890-e9d858566e98)
 
 Let's save our result!
