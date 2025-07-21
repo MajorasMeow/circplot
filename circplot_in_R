@@ -14,8 +14,8 @@ circ_plot <- function(cor_data,
                       viridis_color = "mako",
                       theme_color= "black"){
   library(tidyverse)
-  library(ggforce)      
-  library(ggnewscale)   
+  library(ggforce)      # for radial layout
+  library(ggnewscale)   # to use multiple fill scales
   library(scales)
   
   # data preparation
@@ -110,11 +110,11 @@ circ_plot <- function(cor_data,
       }
     } else if (species == "human"){
       if (getOption("enrichR.live")) {
-        setEnrichrSite("Enrichr") # selects fly genes
+        setEnrichrSite("Enrichr") #selects human genes
         dbs<- c(#"Jensen_DISEASES",
           #"HomoloGene",
           "Rare_Diseases_GeneRIF_Gene_Lists",
-          "Jensen_DISEASES_Curated_2025",
+          "Jensen_DISEASES_Curated_2025"#,
           #"GO_Biological_Process_2025",
           #"IDG_Drug_Targets_2022",
           #"ChEA_2022",
@@ -295,6 +295,7 @@ circ_plot <- function(cor_data,
       "None" = "transparent"
     )
     rare_colors<-c()
+    
   } else if (species == "human"){
     disease_colors <- c(
       # Neurodegenerative
@@ -369,7 +370,7 @@ circ_plot <- function(cor_data,
       "retinal degeneration" = "#495054",  # gray
       
       # Metabolic / storage
-     # "Niemann-Pick disease" = "#1c9099",
+      # "Niemann-Pick disease" = "#1c9099",
       #"Leigh disease" = "#67a9cf",
       #"Alexander disease" = "#3288bd",
       #"ITM2B-RELATED CEREBRAL AMYLOID ANGIOPATHY 2" = "#5e4fa2",
@@ -386,26 +387,53 @@ circ_plot <- function(cor_data,
       "NEUROPATHY" = "#ff93ac",
       "None" = "transparent"
     )
+    
   }
+
   
-  assigned_colors <- c(
-    "nd" = nd_color,
-    "parkinson" = pd_color,
-    "alzheimer" = ad_color,
-    "ALS" = als_color,
-    "SCA3" = sca3_color,
-    "HSP" = hsp_color,
-    "ataxia" = ataxia_color,
-    "cmt" = cmt_color,
-    "tauopathy" = tau_color,
-    "special" = special_color,
-    "viral" = viral_color
-  )
+  if (is.na(unique(cor_data$gene_group))) {
+    rand_terms<-unique(cor_data$disease_term)[unique(cor_data$disease_term)!="None"]
+    set.seed(13)  
+    random_cols <- setNames(
+      grDevices::rainbow(length(rand_terms)),
+      rand_terms
+    )
+    disease_colors <- random_cols
+    
+    set.seed(17)  
+    random_cols2 <- setNames(
+      grDevices::rainbow(length(unique(cor_data$rare_term))),
+      unique(cor_data$rare_term)
+    )
+    rare_colors <- random_cols2
+    
+    cor_data$gene_group<-cor_data$disease_term
+    assigned_colors<-disease_colors
+    
+  } else {
+    assigned_colors <- c(
+      "nd" = nd_color,
+      "parkinson" = pd_color,
+      "alzheimer" = ad_color,
+      "ALS" = als_color,
+      "SCA3" = sca3_color,
+      "HSP" = hsp_color,
+      "ataxia" = ataxia_color,
+      "cmt" = cmt_color,
+      "tauopathy" = tau_color,
+      "special" = special_color,
+      "viral" = viral_color
+    )
+    
+  }
+
   
   if (save==TRUE){
     write.csv(cor_data, savename)
     write.csv(go_df, paste0("GO_DF_", savename))
   }
+  
+  
   
   ##### PLOT
   
@@ -468,7 +496,7 @@ circ_plot <- function(cor_data,
               hjust = 0)+
     # gene labels
     geom_text(
-      data = filter(cor_data, !is.na(gene_group)),
+      data = subset(cor_data,!is.na(gene_group) & gene_group != "None"),
       aes(x = angle, y = label_y, label = gene, color = gene_group),
       size = 1.5,
       angle = 90,
@@ -521,10 +549,14 @@ circ_plot <- function(cor_data,
       inherit.aes = FALSE)+
     
     
-    coord_radial(inner.radius = 0.2, r.axis.inside = T,
-                                rotate.angle = T, expand = F,
-                                start = 0.1*pi, end = 2*pi, clip = "off") +
+    coord_radial(inner.radius = 0.2, 
+                 r.axis.inside = T,
+                 rotate.angle = T, 
+                 expand = F,
+                 start = 0.1*pi, end = 2*pi, clip = "off") +
+    
     labs(x = NULL, y = NULL) +
+    
                    
     theme(
       panel.background    = element_rect(fill = back_color, color = NA),
