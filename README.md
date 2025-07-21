@@ -6,8 +6,7 @@ It function focuses by default on neurodegenerative disease annotation (from Jen
 The plot axis is calculated by 360° but begins with a gap for visibility and labels.
 
 It takes gene correlation data and imputed scRNA expression data from a seurat file as input. For both preparatin steps from a seurat object see https://github.com/MajorasMeow/scRNA/blob/main/scfunctions.
-
-![black](https://github.com/user-attachments/assets/8c29d792-a86b-4257-a7e0-35b2ec2f1303)
+![blacksmall](https://github.com/user-attachments/assets/6c8fe91e-209d-4198-9f4b-4644501f4a86)
 
 
 ## install dependencies for circ_plot()
@@ -24,9 +23,17 @@ install.packages(c(
 ```
 ### install magic for imputation https://github.com/cran/Rmagic
 # EXAMPLE
-Gene Actbeta in a population of C4da neurons from Drosophila peripheral nervous system.
-Genes linked to neurodegenerative disorders are indicated via gene ontology analysis.
 
+We take the pbmc3k dataset from the SeuratData Package and want to find out which are high expressing genes that correlate with the gene CD68 in the whole dataset.
+
+### load and install the dataset
+```r
+devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+InstallData("pbmc3k")
+
+```
+Before we can calculate gene correlations we have to install some dependencies and prepare the data.
 ### install dependencies for regression function
 ```r
 
@@ -37,17 +44,19 @@ install.packages(c(
   "progressr"      
 ))
 ````
+... and use Markov Affinity-based Graph Imputation of Cells (MAGIC) for imputation of expression values.
 ### apply MAGIC imputation on your seurat object
 ```r
-seurat_object <- FullMagic(seurat_object)
+pbmc3k <- FullMagic(pbmc3k)
 ```
 ### extract imputation data from seurat object into a data frame
 ```r
-data <- ImpData(seurat_object)
+data <- ImpData(pbmc3k)
 ```
 ### perform linear regression analysis on a target gene. this code performs linreg and non-lin reg and chooses the better performant regression. calcluates and uses z-scores before regression.
+We chose our target gene and perform the regression analysis.
 ```r
-target_gene <- "Actbeta"
+target_gene <- "CD68"
 cor_data <- linreg_genes(data, target_gene, adj_r2_threshold = 0, workers = 1) # adjust adj_r2 threshold if you aim to exclude any low correlation. set workers to whichever for parallel processing
 ```
 ## 1. Plot your data 
@@ -74,6 +83,7 @@ theme_color= "black"    # Can be black or white
 
 Sometimes we use non numerical or indexing columns etc for certain plots. Here we dont want them.
 Make sure no non numerical columns are in your dataset! Also indexing columns, trajectory values, or other non-expressing numerical columns should be excluded before.
+
 ```r
 # example of non-numerical and index columns we want to exclude
 data<-select(data, -c("ident",       # cluster name from AssignClusterLabels
@@ -84,9 +94,12 @@ data<-select(data, -c("ident",       # cluster name from AssignClusterLabels
 We want to plot our first with save= TRUE as this function prepares our data and uses enrichR for GO database queries.
 Once our function is done, we can set save = FALSE and read = TRUE to read directly from the saved csv.
 
+Also let's take a mean threshold of 0.5 so we just get the top expressed genes.
+The Plot has a default labeling for neurodegenererative disorders, but if no hits are available it labels all disease related genes found in The Jennsen and rare disease GO DB.
+
 # perform circplot calculation and save the file
 ```r
-circ_plot(cor_data =result, expr_data=data, read = F, save = T)
+circ_plot(cor_data =result, expr_data=data, read = F, save = T, mean_cutoff = 0.5)
 
 # perform circplot from file
 circ_plot(cor_data =result, expr_data=data, read = T, save = F) 
@@ -95,13 +108,13 @@ Great! now we have our circular plot!
 Think as the x-axis is bent circular (0-360) and the y-axis is radial (Here we use low values as it is set to slope intensity). In theory you can add more layers and set y-values in their geom to n which defines the level of the object ring/label/etc. For distribution like the GO Biol. Function Terms, each Term and its value were mapped to a certain x-value across 360°. It shows the TOP 5 GO terms for each bracket of adj_r2.
 If we set our threshold to 0 we have 10 brackets, 9 for 0.1, 8 for 0.2...
 We can plot in a light "white" theme...
-
-![white](https://github.com/user-attachments/assets/6d0d028c-6ffe-4d47-b659-32d7c0a8aebf)
+![whitesmall](https://github.com/user-attachments/assets/88713553-c377-4655-bc61-c0ef8dac2931)
 
 ...or as a black theme with ivory labels.
 ```r
 circ_plot(cor_data =result, expr_data=data, read = T, save = F, theme_color = "black") 
 ```
-![black](https://github.com/user-attachments/assets/8c29d792-a86b-4257-a7e0-35b2ec2f1303)
+
+![blacksmall](https://github.com/user-attachments/assets/ca1a6c2f-0bb7-423f-84b7-881fbfb68c4e)
 
 Change and add rings as you like!
