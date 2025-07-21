@@ -6,7 +6,8 @@ It function focuses by default on neurodegenerative disease annotation (from Jen
 The plot axis is calculated by 360° but begins with a gap for visibility and labels.
 
 It takes gene correlation data and imputed scRNA expression data from a seurat file as input. For both preparatin steps from a seurat object see https://github.com/MajorasMeow/scRNA/blob/main/scfunctions.
-![blacksmall](https://github.com/user-attachments/assets/6c8fe91e-209d-4198-9f4b-4644501f4a86)
+
+![blacksmall](https://github.com/user-attachments/assets/397bf6dd-8689-4124-a890-e9d858566e98)
 
 
 ## install dependencies for circ_plot()
@@ -102,19 +103,33 @@ The Plot has a default labeling for neurodegenererative disorders, but if no hit
 circ_plot(cor_data =result, expr_data=data, read = F, save = T, mean_cutoff = 0.5)
 
 # perform circplot from file
-circ_plot(cor_data =result, expr_data=data, read = T, save = F) 
+plot<-circ_plot(cor_data =result, expr_data=data, read = T, save = F)
+plot
 ```
 Great! now we have our circular plot!
 Think as the x-axis is bent circular (0-360) and the y-axis is radial (Here we use low values as it is set to slope intensity). In theory you can add more layers and set y-values in their geom to n which defines the level of the object ring/label/etc. For distribution like the GO Biol. Function Terms, each Term and its value were mapped to a certain x-value across 360°. It shows the TOP 5 GO terms for each bracket of adj_r2.
 If we set our threshold to 0 we have 10 brackets, 9 for 0.1, 8 for 0.2...
-We can plot in a light "white" theme...
-![whitesmall](https://github.com/user-attachments/assets/88713553-c377-4655-bc61-c0ef8dac2931)
+We can plot in a light "white" theme using theme_color="white
+```r
+plot<-circ_plot(cor_data =result, expr_data=data, read = T, save = F, theme_color = "white")
+plot
+```
+![whitesmall](https://github.com/user-attachments/assets/d4a2bb0a-7f0a-419d-ac68-82d4cc84b4ae)
 
 ...or as a black theme with ivory labels.
 ```r
-circ_plot(cor_data =result, expr_data=data, read = T, save = F, theme_color = "black") 
+plot<-circ_plot(cor_data =result, expr_data=data, read = T, save = F, theme_color = "black")
+plot
 ```
 
-![blacksmall](https://github.com/user-attachments/assets/ca1a6c2f-0bb7-423f-84b7-881fbfb68c4e)
 
-Change and add rings as you like!
+![blacksmall](https://github.com/user-attachments/assets/397bf6dd-8689-4124-a890-e9d858566e98)
+
+Let's save our result!
+```r
+ggsave(plot, 
+       filename = paste0("black_corplot.jpg"),
+       device = "jpg",
+       height = 10, width = 10, units = "in")
+```
+For future plots we can change and add rings as we like!
